@@ -1,0 +1,93 @@
+// Prisma Schema for Bastiodon Parental Control & Child Cyber Safety Platform
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model ParentUser {
+  id                 String           @id @default(uuid())
+  email              String           @unique
+  passwordHash       String
+  name               String
+  pinCode            String           @default("1234") // 4-6 digit PIN for extension tamper protection
+  subscriptionTier   String           @default("BASIC") // BASIC, PRO, ULTIMATE
+  subscriptionStatus String           @default("ACTIVE") // ACTIVE, TRIAL, EXPIRED
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  children           ChildDevice[]
+}
+
+model SubscriptionPlan {
+  id           String   @id @default(uuid())
+  name         String   // Basic Shield, Pro Guardian, Family Ultimate
+  tier         String   @unique // BASIC, PRO, ULTIMATE
+  priceInr     Int      // e.g. 199, 499, 899
+  maxDevices   Int      // e.g. 1, 3, 10
+  featuresJson String   // JSON array string of features
+  popular      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+}
+
+model ChildDevice {
+  id               String               @id @default(uuid())
+  parentId         String
+  parent           ParentUser           @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  childName        String
+  pairingCode      String               @unique // 6-character alphanumeric code
+  deviceToken      String?              // JWT issued upon pairing
+  isOnline         Boolean              @default(false)
+  incognitoBlocked Boolean              @default(true)
+  lastSeenAt       DateTime             @default(now())
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  blockingRule     BlockingRule?
+  liveScanLogs     LiveScanLog[]
+  dailyReports     DailySummaryReport[]
+}
+
+model BlockingRule {
+  id                   String      @id @default(uuid())
+  deviceId             String      @unique
+  device               ChildDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  blockAdult           Boolean     @default(true)
+  blockStreaming       Boolean     @default(false)
+  blockGaming          Boolean     @default(false)
+  blockSocialMedia     Boolean     @default(false)
+  customBlockedDomains String      @default("[]") // JSON string array of domains
+  updatedAt            DateTime    @updatedAt
+}
+
+model LiveScanLog {
+  id          String      @id @default(uuid())
+  deviceId    String
+  device      ChildDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  url         String
+  domain      String
+  contentType String      // URL, SEARCH_QUERY, IN_GAME_CHAT, WEB_MESSAGE
+  snippet     String      // flagged text or inspected URL
+  severity    String      // SAFE, WARNING, CRITICAL_ILLEGAL
+  actionTaken String      // ALLOWED, BLOCKED, FLAGGED
+  timestamp   DateTime    @default(now())
+}
+
+model DailySummaryReport {
+  id                    String      @id @default(uuid())
+  deviceId              String
+  device                ChildDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  date                  String      // YYYY-MM-DD
+  totalScreenTimeMins   Int         @default(0)
+  totalSitesVisited     Int         @default(0)
+  blockedAttemptsCount  Int         @default(0)
+  flaggedMessagesCount  Int         @default(0)
+  topDomainsJson        String      @default("[]") // JSON string of [{ domain: string, count: number, minutes: number }]
+  categoryBreakdownJson String      @default("{}") // JSON string of { adult: count, streaming: count, gaming: count, safe: count }
+  createdAt             DateTime    @default(now())
+
+  @@unique([deviceId, date])
+}
+
