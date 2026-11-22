@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "Bastiodon Guardian - Child Cyber Safety",
+  "version": "1.0.0",
+  "description": "Child Cyber Safety & Real-Time Parental Protection Extension for Chrome, Edge, and Brave.",
+  "permissions": [
+    "declarativeNetRequest",
+    "declarativeNetRequestFeedback",
+    "tabs",
+    "webNavigation",
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content_script.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Bastiodon Guardian Shield"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["blocked.html", "incognito_lock.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
+
