@@ -3,16 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Website Blocked by Guardian</title>
+  <title>Website Filtered - Bastiodon Guardian</title>
   <style>
     :root {
-      --canvas: #F3F4F4;
-      --surface: #FFFFFF;
-      --primary: #612D53;
-      --secondary: #853953;
-      --charcoal: #2C2C2C;
-      --alert-red: #D93848;
-      --border: #E0E2E2;
+      --bg-pitch: #000000;
+      --card-bg: rgba(18, 18, 20, 0.85);
+      --card-border: rgba(255, 255, 255, 0.15);
+      --card-glow: 0 0 35px rgba(255, 255, 255, 0.08);
+      --text-white: #FFFFFF;
+      --text-dim: #A1A1AA;
+      --safe-green: #34D399;
+      --alert-red: #F43F5E;
     }
 
     * {
@@ -23,8 +24,8 @@
     }
 
     body {
-      background-color: var(--canvas);
-      color: var(--charcoal);
+      background-color: var(--bg-pitch);
+      color: var(--text-white);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -33,60 +34,143 @@
     }
 
     .container {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 16px;
+      background: var(--card-bg);
+      backdrop-filter: blur(20px);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
       max-width: 520px;
       width: 100%;
       padding: 40px;
       text-align: center;
-      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
+      box-shadow: var(--card-glow);
+      position: relative;
     }
 
     .badge-icon {
-      width: 72px;
-      height: 72px;
-      background: #FEE2E2;
+      width: 68px;
+      height: 68px;
+      background: rgba(244, 63, 94, 0.12);
+      border: 1px solid rgba(244, 63, 94, 0.3);
       color: var(--alert-red);
       border-radius: 50%;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      font-size: 36px;
+      font-size: 32px;
       margin-bottom: 20px;
+      box-shadow: 0 0 25px rgba(244, 63, 94, 0.15);
     }
 
     h1 {
-      font-size: 24px;
+      font-size: 22px;
       font-weight: 700;
-      color: var(--primary);
-      margin-bottom: 12px;
+      letter-spacing: -0.3px;
+      color: var(--text-white);
+      margin-bottom: 10px;
     }
 
     p {
-      font-size: 14px;
-      color: #666;
+      font-size: 13px;
+      color: var(--text-dim);
       line-height: 1.6;
-      margin-bottom: 24px;
+      margin-bottom: 20px;
     }
 
     .blocked-target {
-      background: #F9FAFB;
-      border: 1px dashed var(--border);
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px dashed rgba(255, 255, 255, 0.2);
       padding: 12px;
-      border-radius: 8px;
+      border-radius: 10px;
       font-family: monospace;
       font-size: 13px;
-      color: var(--charcoal);
+      color: var(--text-white);
       word-break: break-all;
       margin-bottom: 24px;
     }
 
-    .footer-note {
+    .unlock-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      padding: 18px;
+      margin-bottom: 20px;
+      text-align: left;
+    }
+
+    .unlock-title {
       font-size: 12px;
-      color: #888;
-      border-top: 1px solid var(--border);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-white);
+      margin-bottom: 6px;
+    }
+
+    .unlock-form {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .pin-input {
+      flex: 1;
+      padding: 10px 14px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      font-size: 14px;
+      letter-spacing: 3px;
+      font-family: monospace;
+      color: var(--text-white);
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .pin-input:focus {
+      border-color: rgba(255, 255, 255, 0.5);
+    }
+
+    .btn-liquid {
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      background: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      color: var(--text-white);
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+
+    .btn-liquid:hover {
+      background: rgba(255, 255, 255, 0.2);
+      border-color: rgba(255, 255, 255, 0.45);
+      box-shadow: 0 0 15px rgba(255, 255, 255, 0.2);
+    }
+
+    .status-msg {
+      font-size: 11px;
+      margin-top: 8px;
+      font-weight: 600;
+    }
+
+    .msg-error {
+      color: var(--alert-red);
+    }
+
+    .msg-success {
+      color: var(--safe-green);
+    }
+
+    .footer-note {
+      font-size: 11px;
+      color: var(--text-dim);
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
       padding-top: 16px;
+      letter-spacing: 0.5px;
     }
   </style>
 </head>
@@ -95,27 +179,30 @@
     <div class="badge-icon">🛑</div>
     <h1>Access Restricted</h1>
     <p>
-      This webpage has been filtered by <strong>Bastiodon Parental Control</strong> in compliance with your family's cyber safety policies.
+      This webpage has been filtered by <strong>Bastiodon Parental Control</strong> in compliance with active safety rules.
     </p>
 
     <div class="blocked-target" id="blockedUrl">
       Restricted Domain / Policy Violation
     </div>
 
-    <p style="font-size: 13px; color: #777;">
-      This activity has been safely logged and synchronized with the Parent Dashboard. If you believe this site was blocked by mistake, please speak to your parent.
-    </p>
+    <div class="unlock-card">
+      <div class="unlock-title">Parent Temporary Bypass</div>
+      <p style="font-size: 12px; margin-bottom: 8px; color: var(--text-dim);">
+        Enter your 6-digit Parent PIN to temporarily unlock this site for 15 minutes.
+      </p>
+      <form class="unlock-form" id="unlockForm">
+        <input type="password" maxlength="6" class="pin-input" id="pinInput" placeholder="6-digit PIN" required />
+        <button type="submit" class="btn-liquid" id="unlockBtn">Verify PIN</button>
+      </form>
+      <div id="unlockMsg" class="status-msg"></div>
+    </div>
 
     <div class="footer-note">
-      Bastiodon &bull; Tamper Resistance Active
+      Bastiodon &bull; Child Cyber Safety Engine Active
     </div>
   </div>
 
-  <script>
-    const params = new URLSearchParams(window.location.search);
-    const url = params.get("url") || window.location.href;
-    document.getElementById("blockedUrl").textContent = url;
-  </script>
+  <script src="blocked.js"></script>
 </body>
 </html>
-
