@@ -23,21 +23,21 @@ import {
 
 dotenv.config();
 
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
+const PORT = process.env.PORT || 4000;
+
 const app = express();
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
   cors: {
-    origin: "*",
+    origin: FRONTEND_URL,
     methods: ["GET", "POST", "PUT", "DELETE"]
   }
 });
 
-const PORT = process.env.PORT || 4000;
-
-app.use(cors());
+app.use(cors({ origin: FRONTEND_URL, credentials: true }));
 app.use(express.json());
 
-// Auth middleware for parents
 function requireParentAuth(req: any, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -52,7 +52,7 @@ function requireParentAuth(req: any, res: Response, next: NextFunction) {
   next();
 }
 
-// Auth middleware for child devices
+
 function requireDeviceAuth(req: any, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -67,16 +67,16 @@ function requireDeviceAuth(req: any, res: Response, next: NextFunction) {
   next();
 }
 
-// ----------------------------------------------------
-// REST ROUTES
-// ----------------------------------------------------
 
-// Health check
+
+
+
+
 app.get("/api/health", (req, res) => {
-  res.json({ status: "healthy", timestamp: new Date().toISOString() });
+  res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// Subscription plans
+
 app.get("/api/plans", async (req, res) => {
   try {
     const plans = await prisma.subscriptionPlan.findMany({
@@ -93,7 +93,7 @@ app.get("/api/plans", async (req, res) => {
   }
 });
 
-// Parent Registration
+
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { email, password, name, pinCode, subscriptionTier } = req.body;
@@ -141,7 +141,7 @@ app.post("/api/auth/register", async (req, res) => {
   }
 });
 
-// Parent Login
+
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -181,7 +181,7 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-// Verify Parent PIN (Tamper Protection)
+
 app.post("/api/parent/verify-pin", requireParentAuth, async (req: any, res) => {
   try {
     const { pin } = req.body;
@@ -197,7 +197,7 @@ app.post("/api/parent/verify-pin", requireParentAuth, async (req: any, res) => {
   }
 });
 
-// Add Child Device & Generate Pairing Code
+
 app.post("/api/devices/create", requireParentAuth, async (req: any, res) => {
   try {
     const { childName } = req.body;
@@ -205,7 +205,7 @@ app.post("/api/devices/create", requireParentAuth, async (req: any, res) => {
       return res.status(400).json({ error: "Child name is required." });
     }
 
-    // Generate unique 6-character alphanumeric pairing code
+    
     const pairingCode = Math.random().toString(36).substring(2, 8).toUpperCase();
 
     const device = await prisma.childDevice.create({
@@ -243,7 +243,7 @@ app.post("/api/devices/create", requireParentAuth, async (req: any, res) => {
   }
 });
 
-// Get Parent's Registered Child Devices
+
 app.get("/api/devices", requireParentAuth, async (req: any, res) => {
   try {
     const devices = await prisma.childDevice.findMany({
@@ -262,7 +262,7 @@ app.get("/api/devices", requireParentAuth, async (req: any, res) => {
   }
 });
 
-// Extension: Pair Device via 6-char Code
+
 app.post("/api/extension/pair", async (req, res) => {
   try {
     const { pairingCode } = req.body;
@@ -289,7 +289,7 @@ app.post("/api/extension/pair", async (req, res) => {
       role: "DEVICE"
     });
 
-    // Mark online and assign device token
+    
     await prisma.childDevice.update({
       where: { id: device.id },
       data: {
@@ -299,7 +299,7 @@ app.post("/api/extension/pair", async (req, res) => {
       }
     });
 
-    // Notify parent room via Socket.io
+    
     io.to(`parent:${device.parentId}`).emit("device:status", {
       deviceId: device.id,
       isOnline: true,
@@ -320,7 +320,7 @@ app.post("/api/extension/pair", async (req, res) => {
   }
 });
 
-// Extension: Verify Parent PIN on child browser (for tamper prevention)
+
 app.post("/api/extension/verify-pin", requireDeviceAuth, async (req: any, res) => {
   try {
     const { pin } = req.body;
@@ -340,7 +340,7 @@ app.post("/api/extension/verify-pin", requireDeviceAuth, async (req: any, res) =
   }
 });
 
-// Extension: Get Active Rules
+
 app.get("/api/extension/rules", requireDeviceAuth, async (req: any, res) => {
   try {
     const device = await prisma.childDevice.findUnique({
@@ -365,7 +365,7 @@ app.get("/api/extension/rules", requireDeviceAuth, async (req: any, res) => {
     }
     activeBlockedDomains.push(...customList);
 
-    // Remove duplicates
+    
     activeBlockedDomains = Array.from(new Set(activeBlockedDomains));
 
     res.json({
@@ -379,7 +379,7 @@ app.get("/api/extension/rules", requireDeviceAuth, async (req: any, res) => {
   }
 });
 
-// Parent Dashboard: Update Blocking Rules
+
 app.put("/api/rules/:deviceId", requireParentAuth, async (req: any, res) => {
   try {
     const { deviceId } = req.params;
@@ -419,7 +419,7 @@ app.put("/api/rules/:deviceId", requireParentAuth, async (req: any, res) => {
       }
     });
 
-    // Notify Extension in real-time via WebSocket
+    
     io.to(`device:${deviceId}`).emit("rules:updated", {
       rule: updatedRule,
       incognitoBlocked
@@ -431,13 +431,13 @@ app.put("/api/rules/:deviceId", requireParentAuth, async (req: any, res) => {
   }
 });
 
-// Telemetry & Live Scanner Event
+
 app.post("/api/telemetry/event", requireDeviceAuth, async (req: any, res) => {
   try {
     const { url, domain, contentType, snippet, forceSeverity, forceAction } = req.body;
     const deviceId = req.device.deviceId;
 
-    // Analyze content if not already analyzed
+    
     const analysis = analyzeContentSnippet(snippet || url || "");
     const severity = forceSeverity || analysis.severity;
     const actionTaken = forceAction || analysis.actionTaken;
@@ -454,7 +454,7 @@ app.post("/api/telemetry/event", requireDeviceAuth, async (req: any, res) => {
       }
     });
 
-    // Broadcast live event to parent's socket room
+    
     io.to(`parent:${req.device.parentId}`).emit("telemetry:new", {
       deviceId,
       log
@@ -466,7 +466,7 @@ app.post("/api/telemetry/event", requireDeviceAuth, async (req: any, res) => {
   }
 });
 
-// Get Live Logs for Device
+
 app.get("/api/telemetry/:deviceId", requireParentAuth, async (req: any, res) => {
   try {
     const { deviceId } = req.params;
@@ -481,7 +481,7 @@ app.get("/api/telemetry/:deviceId", requireParentAuth, async (req: any, res) => 
   }
 });
 
-// End-of-Day (EOD) Batch Sync from Extension
+
 app.post("/api/reports/eod", requireDeviceAuth, async (req: any, res) => {
   try {
     const { date, totalScreenTimeMins, totalSitesVisited, blockedAttemptsCount, flaggedMessagesCount, topDomains, categoryBreakdown } = req.body;
@@ -521,7 +521,7 @@ app.post("/api/reports/eod", requireDeviceAuth, async (req: any, res) => {
   }
 });
 
-// Parent Dashboard: Get Daily Reports
+
 app.get("/api/reports/:deviceId", requireParentAuth, async (req: any, res) => {
   try {
     const { deviceId } = req.params;
@@ -549,7 +549,7 @@ app.get("/api/reports/:deviceId", requireParentAuth, async (req: any, res) => {
   }
 });
 
-// Download Windows .reg Script to Disable Incognito System-wide
+
 app.get("/api/tools/download-incognito-reg", (req, res) => {
   const regContent = `Windows Registry Editor Version 5.00
 
@@ -574,13 +574,13 @@ app.get("/api/tools/download-incognito-reg", (req, res) => {
   res.send(regContent);
 });
 
-// ----------------------------------------------------
-// SOCKET.IO REAL-TIME TELEMETRY ROOMS
-// ----------------------------------------------------
+
+
+
 io.on("connection", (socket) => {
   console.log(`Socket connected: ${socket.id}`);
 
-  // Parent joins private dashboard room
+  
   socket.on("join:parent", ({ parentId, token }) => {
     if (parentId) {
       socket.join(`parent:${parentId}`);
@@ -588,13 +588,13 @@ io.on("connection", (socket) => {
     }
   });
 
-  // Device joins private device room
+  
   socket.on("join:device", async ({ deviceId, deviceToken }) => {
     if (deviceId) {
       socket.join(`device:${deviceId}`);
       console.log(`Device joined room: device:${deviceId}`);
 
-      // Mark device online
+      
       try {
         await prisma.childDevice.update({
           where: { id: deviceId },
@@ -604,7 +604,7 @@ io.on("connection", (socket) => {
     }
   });
 
-  // Real-time live scanner event sent from extension socket
+  
   socket.on("stream:scan", async (data) => {
     const { deviceId, parentId, url, domain, contentType, snippet, severity, actionTaken } = data;
     try {
@@ -636,9 +636,9 @@ io.on("connection", (socket) => {
   });
 });
 
-// ----------------------------------------------------
-// CRON: End-of-Day Automatic Report Aggregation
-// ----------------------------------------------------
+
+
+
 cron.schedule("55 23 * * *", async () => {
   console.log("[CRON] Running End-of-Day report aggregation at 23:55...");
   const today = new Date().toISOString().split("T")[0];
@@ -657,7 +657,7 @@ cron.schedule("55 23 * * *", async () => {
       const blockedCount = logsToday.filter((l: any) => l.actionTaken === "BLOCKED").length;
       const flaggedCount = logsToday.filter((l: any) => l.severity !== "SAFE").length;
 
-      // Domain frequency
+      
       const domainMap: Record<string, number> = {};
       logsToday.forEach((l: any) => {
         if (l.domain) {
@@ -703,7 +703,8 @@ cron.schedule("55 23 * * *", async () => {
 });
 
 server.listen(PORT, () => {
-  console.log(`[Bastiodon Server] Running on http://localhost:${PORT}`);
+  console.log(`[Bastiodon Server] Running on port ${PORT}`);
   console.log(`[Bastiodon WebSocket] Ready for real-time telemetry`);
 });
+
 
