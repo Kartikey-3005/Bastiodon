@@ -21,6 +21,14 @@ import {
   analyzeContentSnippet
 } from "./constants.js";
 
+import authRouter from "./routes/auth.js";
+import { deviceRouter, extensionRouter } from "./routes/devices.js";
+import rulesRouter from "./routes/rules.js";
+import { scannerDeviceRouter, scannerExtensionRouter } from "./routes/scanner.js";
+import { reportsDeviceRouter, reportsExtensionRouter } from "./routes/reports.js";
+import { initSocketIO } from "./lib/socket.js";
+import { startEodCronJob } from "./jobs/eodCron.js";
+
 dotenv.config();
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
@@ -37,6 +45,18 @@ const io = new SocketIOServer(server, {
 
 app.use(cors({ origin: FRONTEND_URL, credentials: true }));
 app.use(express.json());
+
+app.use("/api/auth", authRouter);
+app.use("/api/devices", deviceRouter);
+app.use("/api/devices", rulesRouter);
+app.use("/api/devices", scannerDeviceRouter);
+app.use("/api/devices", reportsDeviceRouter);
+app.use("/api/extension", extensionRouter);
+app.use("/api/extension", scannerExtensionRouter);
+app.use("/api/extension", reportsExtensionRouter);
+
+initSocketIO(io);
+startEodCronJob();
 
 function requireParentAuth(req: any, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
