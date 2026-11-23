@@ -45,7 +45,6 @@ export const GAMING_DOMAINS = [
   "chess.com"
 ];
 
-// Content scanning dictionary for real-time safety categorization
 export const DANGEROUS_KEYWORDS = [
   { phrase: "suicide", severity: "CRITICAL_ILLEGAL", category: "SELF_HARM" },
   { phrase: "kill yourself", severity: "CRITICAL_ILLEGAL", category: "HARASSMENT_THREAT" },
