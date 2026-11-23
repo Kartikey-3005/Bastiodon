@@ -1,244 +1,366 @@
-// Bastiodon Guardian: Manifest V3 Background Service Worker
-// Handles: Dynamic declarativeNetRequest blocking, Incognito lockdown, Live telemetry sync, and EOD reporting.
-
 const DEFAULT_SERVER_URL = "http://localhost:4000";
 
-// Maintain in-memory active rules
-let cachedBlockedDomains = [];
-let localEodMetrics = {
-  screenTimeMinutes: 0,
-  sitesVisited: 0,
-  blockedAttempts: 0,
-  flaggedMessages: 0,
-  domainVisits: {}
+const ADULT_DOMAINS = [
+  "pornhub.com",
+  "xvideos.com",
+  "xnxx.com",
+  "redtube.com",
+  "youporn.com",
+  "chaturbate.com",
+  "livejasmin.com",
+  "stripchat.com",
+  "onlyfans.com",
+  "cam4.com",
+  "xhamster.com",
+  "beeg.com",
+  "spankbang.com"
+];
+
+const STREAMING_DOMAINS = [
+  "netflix.com",
+  "primevideo.com",
+  "hotstar.com",
+  "jiocinema.com",
+  "twitch.tv",
+  "disneyplus.com",
+  "hulu.com",
+  "max.com",
+  "crunchyroll.com",
+  "dailymotion.com",
+  "vimeo.com"
+];
+
+const GAMING_DOMAINS = [
+  "roblox.com",
+  "poki.com",
+  "crazygames.com",
+  "steampowered.com",
+  "epicgames.com",
+  "discord.com",
+  "krunker.io",
+  "agar.io",
+  "slither.io",
+  "minecraft.net"
+];
+
+let cachedRules = {
+  blockAdult: true,
+  blockStreaming: true,
+  blockGaming: false,
+  scanChats: true,
+  lockIncognito: true,
+  customDomains: []
 };
 
-// ----------------------------------------------------------------
-// 1. INITIALIZATION & INCOGNITO ENFORCEMENT
-// ----------------------------------------------------------------
+let bufferedEvents = [];
+let localMetrics = {
+  totalHours: 0,
+  domainReach: 0,
+  blocksCount: 0,
+  alertsCount: 0,
+  domainVisits: {},
+  hourlyActivity: new Array(24).fill(0)
+};
+
+let temporaryBypasses = new Set();
+
 chrome.runtime.onInstalled.addListener(() => {
-  console.log("[Bastiodon Guardian] Extension Installed / Updated.");
-  checkIncognitoStatus();
-  syncRules();
-  setupAlarms();
+  initializeExtension();
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  console.log("[Bastiodon Guardian] Extension Startup.");
-  checkIncognitoStatus();
-  syncRules();
+  initializeExtension();
 });
 
-// Check if extension is allowed in Incognito; if blocked by policy, enforce lock
+function initializeExtension() {
+  setupAlarms();
+  checkIncognitoStatus();
+  syncRules();
+}
+
+function setupAlarms() {
+  chrome.alarms.create("heartbeat_alarm", { periodInMinutes: 0.5 });
+  chrome.alarms.create("eod_sync_alarm", { periodInMinutes: 5 });
+  chrome.alarms.create("rule_poll_alarm", { periodInMinutes: 2 });
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === "heartbeat_alarm") {
+    sendHeartbeat();
+    flushBufferedEvents();
+  } else if (alarm.name === "eod_sync_alarm") {
+    syncEodReport();
+  } else if (alarm.name === "rule_poll_alarm") {
+    syncRules();
+  }
+});
+
 function checkIncognitoStatus() {
   chrome.extension.isAllowedIncognitoAccess((isAllowed) => {
-    chrome.storage.local.get(["incognitoBlocked"], (data) => {
-      const incognitoPolicyActive = data.incognitoBlocked !== false;
-      if (incognitoPolicyActive && !isAllowed) {
-        console.warn("[Bastiodon Guardian] Incognito access is NOT granted to the extension!");
+    chrome.storage.local.get(["rules", "deviceToken"], (data) => {
+      const lockActive = data.rules ? data.rules.lockIncognito !== false : true;
+      if (lockActive && !isAllowed) {
+        logSecurityEvent({
+          eventType: "INCOGNITO_ATTEMPT",
+          source: "Chrome Security Audit",
+          snippet: "Extension lacks Incognito permission while lockIncognito is active",
+          severity: "WARNING",
+          timestamp: new Date().toISOString()
+        });
       }
     });
   });
 }
 
-// Intercept tabs opened in incognito
 chrome.tabs.onCreated.addListener((tab) => {
   if (tab.incognito) {
-    chrome.storage.local.get(["incognitoBlocked"], (data) => {
-      if (data.incognitoBlocked !== false) {
-        // Close or redirect incognito tab
+    chrome.storage.local.get(["rules"], (data) => {
+      const lockActive = data.rules ? data.rules.lockIncognito !== false : true;
+      if (lockActive) {
         chrome.tabs.update(tab.id, {
           url: chrome.runtime.getURL("incognito_lock.html")
+        });
+
+        logSecurityEvent({
+          eventType: "INCOGNITO_ATTEMPT",
+          source: "Incognito Tab Intercept",
+          snippet: "Private browsing tab intercepted and locked",
+          severity: "WARNING",
+          timestamp: new Date().toISOString()
         });
       }
     });
   }
 });
 
-// ----------------------------------------------------------------
-// 2. DYNAMIC NETWORK BLOCKING (declarativeNetRequest)
-// ----------------------------------------------------------------
 async function syncRules() {
-  chrome.storage.local.get(["deviceToken", "backendUrl"], async (data) => {
-    if (!data.deviceToken) {
-      console.log("[Bastiodon Guardian] Device not paired. Skipping rule sync.");
-      return;
-    }
+  chrome.storage.local.get(["serverUrl", "deviceId", "deviceToken"], async (data) => {
+    if (!data.deviceId || !data.deviceToken) return;
 
-    const serverUrl = (data.backendUrl || DEFAULT_SERVER_URL).replace(/\/$/, "");
+    const serverUrl = data.serverUrl || DEFAULT_SERVER_URL;
     try {
-      const res = await fetch(`${serverUrl}/api/extension/rules`, {
-        headers: { "Authorization": `Bearer ${data.deviceToken}` }
+      const res = await fetch(`${serverUrl}/api/devices/${data.deviceId}/rules`, {
+        headers: {
+          Authorization: `Bearer ${data.deviceToken}`,
+          "x-device-token": data.deviceToken
+        }
       });
 
       if (!res.ok) return;
-      const resData = await res.json();
-      cachedBlockedDomains = resData.activeBlockedDomains || [];
 
-      // Update declarativeNetRequest dynamic rules
-      const rules = cachedBlockedDomains.map((domain, index) => ({
-        id: index + 1,
-        priority: 1,
-        action: {
-          type: "redirect",
-          redirect: {
-            url: chrome.runtime.getURL(`blocked.html?url=https://${domain}`)
-          }
-        },
-        condition: {
-          urlFilter: `||${domain}`,
-          resourceTypes: ["main_frame", "sub_frame"]
-        }
-      }));
-
-      // Get existing rule IDs to remove
-      const oldRules = await chrome.declarativeNetRequest.getDynamicRules();
-      const removeRuleIds = oldRules.map(r => r.id);
-
-      await chrome.declarativeNetRequest.updateDynamicRules({
-        removeRuleIds,
-        addRules: rules
-      });
-
-      console.log(`[Bastiodon Guardian] Updated ${rules.length} blocking rules.`);
-    } catch (err) {
-      console.error("[Bastiodon Guardian] Failed to sync rules:", err);
-    }
+      const body = await res.json();
+      if (body.rule) {
+        cachedRules = body.rule;
+        chrome.storage.local.set({ rules: body.rule });
+        await applyDeclarativeRules(body.rule);
+      }
+    } catch (err) { }
   });
 }
 
-// ----------------------------------------------------------------
-// 3. REAL-TIME NAVIGATION & TELEMETRY DISPATCH
-// ----------------------------------------------------------------
+async function applyDeclarativeRules(rules) {
+  const domainsToBlock = new Set();
+
+  if (rules.blockAdult) {
+    ADULT_DOMAINS.forEach((d) => domainsToBlock.add(d));
+  }
+  if (rules.blockStreaming) {
+    STREAMING_DOMAINS.forEach((d) => domainsToBlock.add(d));
+  }
+  if (rules.blockGaming) {
+    GAMING_DOMAINS.forEach((d) => domainsToBlock.add(d));
+  }
+  if (Array.isArray(rules.customDomains)) {
+    rules.customDomains.forEach((d) => domainsToBlock.add(d.trim().toLowerCase()));
+  }
+
+  temporaryBypasses.forEach((bypassed) => {
+    domainsToBlock.delete(bypassed);
+  });
+
+  const ruleList = Array.from(domainsToBlock);
+  const newRules = ruleList.map((domain, idx) => ({
+    id: idx + 1,
+    priority: 1,
+    action: {
+      type: "redirect",
+      redirect: {
+        url: chrome.runtime.getURL(`blocked.html?url=https://${domain}`)
+      }
+    },
+    condition: {
+      urlFilter: `||${domain}`,
+      resourceTypes: ["main_frame", "sub_frame"]
+    }
+  }));
+
+  try {
+    const existingRules = await chrome.declarativeNetRequest.getDynamicRules();
+    const removeRuleIds = existingRules.map((r) => r.id);
+
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds,
+      addRules: newRules
+    });
+  } catch (err) { }
+}
+
 chrome.webNavigation.onCommitted.addListener((details) => {
-  // Main frame only
   if (details.frameId === 0 && details.url && !details.url.startsWith("chrome") && !details.url.startsWith("edge")) {
-    handlePageNavigation(details.url);
+    handleNavigation(details.url);
   }
 });
 
-function handlePageNavigation(url) {
+function handleNavigation(url) {
   try {
     const parsed = new URL(url);
     const domain = parsed.hostname;
 
-    // Track metrics
-    localEodMetrics.sitesVisited += 1;
-    localEodMetrics.domainVisits[domain] = (localEodMetrics.domainVisits[domain] || 0) + 1;
+    const currentHour = new Date().getHours();
+    localMetrics.hourlyActivity[currentHour] = (localMetrics.hourlyActivity[currentHour] || 0) + 1;
+    localMetrics.domainVisits[domain] = (localMetrics.domainVisits[domain] || 0) + 1;
+    localMetrics.domainReach = Object.keys(localMetrics.domainVisits).length;
 
-    // Check if domain is blocked
-    const isBlocked = cachedBlockedDomains.some(d => domain.includes(d) || d.includes(domain));
+    let isBlocked = false;
+    if (cachedRules.blockAdult && ADULT_DOMAINS.some((d) => domain.includes(d))) isBlocked = true;
+    if (cachedRules.blockStreaming && STREAMING_DOMAINS.some((d) => domain.includes(d))) isBlocked = true;
+    if (cachedRules.blockGaming && GAMING_DOMAINS.some((d) => domain.includes(d))) isBlocked = true;
+    if (cachedRules.customDomains && cachedRules.customDomains.some((d) => domain.includes(d))) isBlocked = true;
+
     if (isBlocked) {
-      localEodMetrics.blockedAttempts += 1;
+      localMetrics.blocksCount++;
+      logSecurityEvent({
+        eventType: "BLOCKED_DOMAIN",
+        source: domain,
+        snippet: `Blocked access attempt: ${url}`,
+        severity: "CRITICAL",
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      logSecurityEvent({
+        eventType: "URL_VISIT",
+        source: domain,
+        snippet: url,
+        severity: "SAFE",
+        timestamp: new Date().toISOString()
+      });
     }
-
-    // Transmit telemetry event to backend
-    sendTelemetryEvent({
-      url,
-      domain,
-      contentType: "URL",
-      snippet: url,
-      severity: isBlocked ? "CRITICAL_ILLEGAL" : "SAFE",
-      actionTaken: isBlocked ? "BLOCKED" : "ALLOWED"
-    });
-  } catch (err) {}
+  } catch { }
 }
 
-async function sendTelemetryEvent(payload) {
-  chrome.storage.local.get(["deviceToken", "backendUrl"], async (data) => {
+function logSecurityEvent(event) {
+  bufferedEvents.push(event);
+  if (bufferedEvents.length >= 10) {
+    flushBufferedEvents();
+  }
+}
+
+async function flushBufferedEvents() {
+  if (bufferedEvents.length === 0) return;
+
+  chrome.storage.local.get(["serverUrl", "deviceToken"], async (data) => {
     if (!data.deviceToken) return;
-    const serverUrl = (data.backendUrl || DEFAULT_SERVER_URL).replace(/\/$/, "");
+
+    const serverUrl = data.serverUrl || DEFAULT_SERVER_URL;
+    const toSend = [...bufferedEvents];
+    bufferedEvents = [];
 
     try {
-      await fetch(`${serverUrl}/api/telemetry/event`, {
+      const res = await fetch(`${serverUrl}/api/extension/events`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${data.deviceToken}`
+          Authorization: `Bearer ${data.deviceToken}`,
+          "x-device-token": data.deviceToken
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ events: toSend })
       });
+
+      if (!res.ok) {
+        bufferedEvents.push(...toSend);
+      }
     } catch (err) {
-      // Offline fallback: keep silent or buffer
+      bufferedEvents.push(...toSend);
     }
   });
 }
 
-// ----------------------------------------------------------------
-// 4. LISTEN FOR CONTENT SCRIPT MESSAGES
-// ----------------------------------------------------------------
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === "SYNC_RULES") {
-    syncRules();
-    sendResponse({ ok: true });
-  } else if (message.type === "FLAGGED_CONTENT") {
-    localEodMetrics.flaggedMessages += 1;
-    sendTelemetryEvent(message.payload);
-    sendResponse({ ok: true });
-  } else if (message.type === "SEARCH_QUERY") {
-    sendTelemetryEvent(message.payload);
-    sendResponse({ ok: true });
+async function sendHeartbeat() {
+  chrome.storage.local.get(["serverUrl", "deviceToken"], async (data) => {
+    if (!data.deviceToken) return;
+
+    const serverUrl = data.serverUrl || DEFAULT_SERVER_URL;
+    try {
+      await fetch(`${serverUrl}/api/extension/heartbeat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${data.deviceToken}`,
+          "x-device-token": data.deviceToken
+        },
+        body: JSON.stringify({
+          incognitoLocked: cachedRules.lockIncognito !== false
+        })
+      });
+    } catch { }
+  });
+}
+
+async function syncEodReport() {
+  chrome.storage.local.get(["serverUrl", "deviceToken"], async (data) => {
+    if (!data.deviceToken) return;
+
+    const serverUrl = data.serverUrl || DEFAULT_SERVER_URL;
+    const today = new Date().toISOString().split("T")[0];
+
+    try {
+      await fetch(`${serverUrl}/api/extension/eod-sync`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${data.deviceToken}`,
+          "x-device-token": data.deviceToken
+        },
+        body: JSON.stringify({
+          date: today,
+          totalHours: Math.round((localMetrics.hourlyActivity.reduce((a, b) => a + b, 0) / 60) * 10) / 10,
+          domainReach: localMetrics.domainReach,
+          hourlyActivityJson: localMetrics.hourlyActivity,
+          categoryBreakdownJson: {
+            safe: localMetrics.hourlyActivity.reduce((a, b) => a + b, 0),
+            warning: localMetrics.alertsCount,
+            critical: localMetrics.blocksCount
+          },
+          blocksCount: localMetrics.blocksCount,
+          alertsCount: localMetrics.alertsCount
+        })
+      });
+    } catch { }
+  });
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === "FLAGGED_CONTENT") {
+    localMetrics.alertsCount++;
+    logSecurityEvent(msg.payload);
+    sendResponse({ received: true });
+  } else if (msg.type === "SEARCH_QUERY") {
+    logSecurityEvent(msg.payload);
+    sendResponse({ received: true });
+  } else if (msg.type === "TEMPORARY_BYPASS" && msg.url) {
+    try {
+      const parsed = new URL(msg.url);
+      temporaryBypasses.add(parsed.hostname);
+      applyDeclarativeRules(cachedRules);
+      setTimeout(() => {
+        temporaryBypasses.delete(parsed.hostname);
+        applyDeclarativeRules(cachedRules);
+      }, 15 * 60 * 1000);
+    } catch { }
+    sendResponse({ bypassed: true });
+  } else if (msg.type === "MANUAL_SYNC") {
+    syncRules().then(() => sendHeartbeat()).then(() => flushBufferedEvents()).then(() => syncEodReport());
+    sendResponse({ triggered: true });
   }
   return true;
 });
-
-// ----------------------------------------------------------------
-// 5. PERIODIC ALARMS: RULE SYNC & END-OF-DAY BATCH DISPATCH
-// ----------------------------------------------------------------
-function setupAlarms() {
-  chrome.alarms.create("sync_rules_alarm", { periodInMinutes: 5 });
-  chrome.alarms.create("eod_sync_alarm", { periodInMinutes: 15 });
-  chrome.alarms.create("screen_time_tick", { periodInMinutes: 1 });
-}
-
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "sync_rules_alarm") {
-    syncRules();
-  } else if (alarm.name === "screen_time_tick") {
-    // Increment active screen time
-    localEodMetrics.screenTimeMinutes += 1;
-  } else if (alarm.name === "eod_sync_alarm") {
-    flushEodBatchReport();
-  }
-});
-
-async function flushEodBatchReport() {
-  chrome.storage.local.get(["deviceToken", "backendUrl"], async (data) => {
-    if (!data.deviceToken) return;
-    const serverUrl = (data.backendUrl || DEFAULT_SERVER_URL).replace(/\/$/, "");
-
-    const topDomains = Object.entries(localEodMetrics.domainVisits)
-      .map(([domain, count]) => ({ domain, count, minutes: count * 2 }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
-
-    const payload = {
-      date: new Date().toISOString().split("T")[0],
-      totalScreenTimeMins: localEodMetrics.screenTimeMinutes,
-      totalSitesVisited: localEodMetrics.sitesVisited,
-      blockedAttemptsCount: localEodMetrics.blockedAttempts,
-      flaggedMessagesCount: localEodMetrics.flaggedMessages,
-      topDomains,
-      categoryBreakdown: {
-        safe: Math.max(0, localEodMetrics.sitesVisited - localEodMetrics.blockedAttempts),
-        blocked: localEodMetrics.blockedAttempts,
-        flagged: localEodMetrics.flaggedMessages
-      }
-    };
-
-    try {
-      await fetch(`${serverUrl}/api/reports/eod`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${data.deviceToken}`
-        },
-        body: JSON.stringify(payload)
-      });
-      console.log("[Bastiodon Guardian] EOD summary synced to server.");
-    } catch (err) {
-      console.error("[Bastiodon Guardian] EOD sync error:", err);
-    }
-  });
-}
-
