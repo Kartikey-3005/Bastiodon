@@ -1,0 +1,96 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/client"
+}
+
+enum PlanTier {
+  BASIC
+  PRO
+  ULTIMATE
+}
+
+enum ScanEventType {
+  URL_VISIT
+  BLOCKED_DOMAIN
+  CHAT_ALERT
+  SEARCH_ALERT
+  INCOGNITO_ATTEMPT
+}
+
+enum ScanSeverity {
+  SAFE
+  WARNING
+  CRITICAL
+}
+
+model User {
+  id           String        @id @default(uuid())
+  email        String        @unique
+  passwordHash String
+  pinHash      String
+  plan         PlanTier      @default(PRO)
+  devices      ChildDevice[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model ChildDevice {
+  id              String         @id @default(uuid())
+  parentId        String
+  parent          User           @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  name            String
+  browser         String
+  pairingCode     String         @unique
+  deviceToken     String         @unique
+  isOnline        Boolean        @default(false)
+  incognitoLocked Boolean        @default(true)
+  lastSeenAt      DateTime       @default(now())
+  rules           BlockingRule?
+  events          ScanEvent[]
+  summaries       DailySummary[]
+  createdAt       DateTime       @default(now())
+}
+
+model BlockingRule {
+  id             String      @id @default(uuid())
+  deviceId       String      @unique
+  device         ChildDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  blockAdult     Boolean     @default(true)
+  blockStreaming Boolean     @default(true)
+  blockGaming    Boolean     @default(false)
+  scanChats      Boolean     @default(true)
+  lockIncognito  Boolean     @default(true)
+  customDomains  String[]
+  updatedAt      DateTime    @updatedAt
+}
+
+model ScanEvent {
+  id        String        @id @default(uuid())
+  deviceId  String
+  device    ChildDevice   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  eventType ScanEventType
+  source    String
+  snippet   String
+  severity  ScanSeverity
+  createdAt DateTime      @default(now())
+}
+
+model DailySummary {
+  id                    String      @id @default(uuid())
+  deviceId              String
+  device                ChildDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  date                  DateTime
+  totalHours            Float
+  domainReach           Int
+  hourlyActivityJson    Json
+  categoryBreakdownJson Json
+  blocksCount           Int
+  alertsCount           Int
+
+  @@unique([deviceId, date])
+}
