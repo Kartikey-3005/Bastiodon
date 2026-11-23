@@ -14,11 +14,22 @@ export interface Plan {
 export interface ChildDevice {
   id: string;
   childName: string;
+  name?: string;
+  browser?: string;
   pairingCode: string;
   isOnline: boolean;
-  incognitoBlocked: boolean;
+  incognitoBlocked?: boolean;
+  incognitoLocked?: boolean;
   lastSeenAt: string;
   createdAt: string;
+  rules?: {
+    blockAdult: boolean;
+    blockStreaming: boolean;
+    blockGaming: boolean;
+    scanChats: boolean;
+    lockIncognito: boolean;
+    customDomains: string[];
+  };
   blockingRule?: {
     blockAdult: boolean;
     blockStreaming: boolean;
@@ -30,30 +41,31 @@ export interface ChildDevice {
 export interface ScanLog {
   id: string;
   deviceId: string;
-  url: string;
-  domain: string;
-  contentType: "URL" | "SEARCH_QUERY" | "IN_GAME_CHAT" | "WEB_MESSAGE";
+  url?: string;
+  domain?: string;
+  source?: string;
+  eventType?: string;
+  contentType?: "URL" | "SEARCH_QUERY" | "IN_GAME_CHAT" | "WEB_MESSAGE";
   snippet: string;
-  severity: "SAFE" | "WARNING" | "CRITICAL_ILLEGAL";
+  severity: "SAFE" | "WARNING" | "CRITICAL_ILLEGAL" | "CRITICAL";
   actionTaken: "ALLOWED" | "BLOCKED" | "FLAGGED";
   timestamp: string;
+  createdAt?: string;
 }
 
 export interface DailyReport {
   id: string;
   deviceId: string;
   date: string;
-  totalScreenTimeMins: number;
-  totalSitesVisited: number;
-  blockedAttemptsCount: number;
-  flaggedMessagesCount: number;
-  topDomains: { domain: string; count: number; minutes: number }[];
-  categoryBreakdown: {
-    safe?: number;
-    blocked?: number;
-    flagged?: number;
-    warning?: number;
-    critical?: number;
-  };
+  totalHours?: number;
+  domainReach?: number;
+  totalScreenTimeMins?: number;
+  totalSitesVisited?: number;
+  blockedAttemptsCount?: number;
+  flaggedMessagesCount?: number;
+  blocksCount?: number;
+  alertsCount?: number;
+  hourlyActivityJson?: any;
+  categoryBreakdownJson?: any;
+  topDomains?: { domain: string; count: number; minutes: number }[];
 }
-
