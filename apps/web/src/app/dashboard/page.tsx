@@ -48,6 +48,7 @@ import {
   Check
 } from "lucide-react";
 import { API_BASE_URL, SOCKET_URL, ChildDevice, ScanLog } from "@/types";
+import { fetchWithAuth, getAuthToken } from "@/lib/api";
 
 const INITIAL_DEMO_DEVICES: ChildDevice[] = [
   {
@@ -98,8 +99,8 @@ const INITIAL_DEMO_LOGS: Record<string, ScanLog[]> = {
     {
       id: "log-2",
       deviceId: "demo-aarav",
-      url: "https://youtube.com/watch?v=trending",
-      domain: "youtube.com",
+      url: "https://netflix.com/browse",
+      domain: "netflix.com",
       contentType: "URL",
       snippet: "Blocked because Streaming Sites toggle is ON",
       severity: "CRITICAL_ILLEGAL",
@@ -178,7 +179,6 @@ export default function DashboardPage() {
   const [blockAdult, setBlockAdult] = useState(true);
   const [blockStreaming, setBlockStreaming] = useState(false);
   const [streamingServices, setStreamingServices] = useState({
-    youtube: true,
     netflix: true,
     prime: true,
     hotstar: true,
@@ -191,8 +191,9 @@ export default function DashboardPage() {
   const [newDomainInput, setNewDomainInput] = useState("");
 
   const [dateRange, setDateRange] = useState<"today" | "yesterday" | "week">("today");
+  const [dailySummaryData, setDailySummaryData] = useState<any>(null);
 
-  const [parentPin, setParentPin] = useState("1234");
+  const [parentPin, setParentPin] = useState("123456");
   const [newPinInput, setNewPinInput] = useState("");
   const [pinUpdateMessage, setPinUpdateMessage] = useState("");
 
@@ -203,48 +204,140 @@ export default function DashboardPage() {
   const [toastAlert, setToastAlert] = useState<{ message: string; type: "alert" | "safe" } | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
 
+  const [metrics, setMetrics] = useState({
+    totalInterventions: 1842,
+    conversionRate: "7.8%",
+    domainReach: 10200,
+    dailyHours: 4.8
+  });
+
   const socketRef = useRef<Socket | null>(null);
 
+  const fetchDevices = async () => {
+    try {
+      const res = await fetchWithAuth("/api/devices");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.devices && data.devices.length > 0) {
+          const mapped: ChildDevice[] = data.devices.map((d: any) => ({
+            id: d.id,
+            childName: d.name || "Child's Device",
+            name: d.name,
+            pairingCode: d.pairingCode,
+            isOnline: Boolean(d.isOnline),
+            incognitoBlocked: Boolean(d.incognitoLocked),
+            incognitoLocked: Boolean(d.incognitoLocked),
+            lastSeenAt: d.lastSeenAt || new Date().toISOString(),
+            createdAt: d.createdAt || new Date().toISOString(),
+            rules: d.rules,
+            blockingRule: {
+              blockAdult: d.rules?.blockAdult ?? true,
+              blockStreaming: d.rules?.blockStreaming ?? false,
+              blockGaming: d.rules?.blockGaming ?? false,
+              customBlockedDomains: JSON.stringify(d.rules?.customDomains || [])
+            }
+          }));
+          setDevices(mapped);
+          setSelectedDeviceId((prev) => {
+            const exists = mapped.some((m) => m.id === prev);
+            return exists ? prev : mapped[0].id;
+          });
+        }
+      }
+    } catch { }
+  };
+
+  const fetchEvents = async (devId: string) => {
+    try {
+      const res = await fetchWithAuth(`/api/devices/${devId}/events?limit=50`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.events) {
+          const mapped: ScanLog[] = data.events.map((e: any) => ({
+            id: e.id,
+            deviceId: e.deviceId,
+            url: e.snippet?.startsWith("http") ? e.snippet : `https://${e.source}`,
+            domain: e.source,
+            source: e.source,
+            eventType: e.eventType,
+            contentType: e.eventType === "CHAT_ALERT" ? "IN_GAME_CHAT" : e.eventType === "SEARCH_ALERT" ? "SEARCH_QUERY" : "URL",
+            snippet: e.snippet,
+            severity: e.severity === "CRITICAL" ? "CRITICAL_ILLEGAL" : e.severity,
+            actionTaken: e.eventType === "BLOCKED_DOMAIN" ? "BLOCKED" : e.eventType === "CHAT_ALERT" ? "FLAGGED" : "ALLOWED",
+            timestamp: e.createdAt || new Date().toISOString()
+          }));
+          setLogsMap((prev) => ({
+            ...prev,
+            [devId]: mapped
+          }));
+        }
+      }
+    } catch { }
+  };
+
+  const fetchEodSummary = async (devId: string) => {
+    try {
+      const res = await fetchWithAuth(`/api/devices/${devId}/eod`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.summary) {
+          setDailySummaryData(data.summary);
+          setMetrics((prev) => ({
+            ...prev,
+            totalInterventions: data.summary.blocksCount + data.summary.alertsCount || prev.totalInterventions,
+            domainReach: data.summary.domainReach || prev.domainReach,
+            dailyHours: data.summary.totalHours || prev.dailyHours
+          }));
+        }
+      }
+    } catch { }
+  };
+
   useEffect(() => {
-    const token = localStorage.getItem("bastiodon_parent_token");
     const userStr = localStorage.getItem("bastiodon_parent_user");
     if (userStr) {
       try {
         const u = JSON.parse(userStr);
         setParent(u);
         if (u.pinCode) setParentPin(u.pinCode);
-      } catch (e) { }
+      } catch { }
     } else {
       setParent({
         id: "demo-parent-account",
         name: "Demonstration Parent",
-        email: "parent@bastiodon.local",
+        email: "parent.demo@bastiodon.com",
         subscriptionTier: "PRO",
-        pinCode: "1234"
+        pinCode: "654321"
       });
     }
 
-    if (token) {
-      fetch(`${API_BASE_URL}/api/devices`, {
-        headers: { Authorization: `Bearer ${token}` }
+    fetchWithAuth("/api/auth/me")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((me) => {
+        if (me) {
+          setParent((prev: any) => ({ ...prev, ...me }));
+        }
       })
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.devices && data.devices.length > 0) {
-            setDevices(data.devices);
-            setSelectedDeviceId(data.devices[0].id);
-          }
-        })
-        .catch(() => { });
-    }
+      .catch(() => { });
+
+    fetchDevices();
   }, []);
 
   const selectedDevice = devices.find((d) => d.id === selectedDeviceId) || devices[0];
 
   useEffect(() => {
     if (!selectedDevice) return;
-    const rule = selectedDevice.blockingRule;
-    if (rule) {
+
+    if (selectedDevice.rules) {
+      const r = selectedDevice.rules;
+      setBlockAdult(r.blockAdult);
+      setBlockStreaming(r.blockStreaming);
+      setBlockGaming(r.blockGaming);
+      setLockIncognito(r.lockIncognito);
+      setScanChats(r.scanChats);
+      setCustomDomains(r.customDomains || []);
+    } else if (selectedDevice.blockingRule) {
+      const rule = selectedDevice.blockingRule;
       setBlockAdult(rule.blockAdult);
       setBlockStreaming(rule.blockStreaming);
       setBlockGaming(rule.blockGaming);
@@ -253,39 +346,69 @@ export default function DashboardPage() {
       } catch {
         setCustomDomains([]);
       }
+      setLockIncognito(selectedDevice.incognitoBlocked !== false);
     }
-    setLockIncognito(selectedDevice.incognitoBlocked);
+
+    fetchEvents(selectedDevice.id);
+    fetchEodSummary(selectedDevice.id);
   }, [selectedDeviceId]);
 
   const parentId = parent?.id;
 
   useEffect(() => {
-    if (!parentId) return;
-
     const socket = io(SOCKET_URL, {
       transports: ["websocket", "polling"]
     });
     socketRef.current = socket;
 
     socket.on("connect", () => {
-      socket.emit("join:parent", { parentId });
+      const token = getAuthToken();
+      socket.emit("join:parent", { parentId: parentId || "demo-parent-account", token });
     });
 
-    socket.on("telemetry:new", (data: { deviceId: string; log: ScanLog }) => {
+    socket.on("scanner:new_event", (event: any) => {
+      const devId = event.deviceId || selectedDeviceId;
+      const formattedLog: ScanLog = {
+        id: event.id || `ev-${Date.now()}`,
+        deviceId: devId,
+        url: event.snippet?.startsWith("http") ? event.snippet : `https://${event.source}`,
+        domain: event.source,
+        source: event.source,
+        eventType: event.eventType,
+        contentType: event.eventType === "CHAT_ALERT" ? "IN_GAME_CHAT" : event.eventType === "SEARCH_ALERT" ? "SEARCH_QUERY" : "URL",
+        snippet: event.snippet,
+        severity: event.severity === "CRITICAL" ? "CRITICAL_ILLEGAL" : event.severity,
+        actionTaken: event.eventType === "BLOCKED_DOMAIN" ? "BLOCKED" : event.eventType === "CHAT_ALERT" ? "FLAGGED" : "ALLOWED",
+        timestamp: event.createdAt || new Date().toISOString()
+      };
+
       setLogsMap((prev) => {
-        const currentList = prev[data.deviceId] || [];
-        return {
-          ...prev,
-          [data.deviceId]: [data.log, ...currentList]
-        };
+        const curr = prev[devId] || [];
+        return { ...prev, [devId]: [formattedLog, ...curr] };
       });
 
-      if (data.log.severity === "CRITICAL_ILLEGAL" || data.log.actionTaken === "BLOCKED") {
+      if (event.eventType === "BLOCKED_DOMAIN" || event.severity === "CRITICAL") {
         setToastAlert({
-          message: `Blocked unsafe activity: ${data.log.domain || data.log.snippet}`,
+          message: `Blocked unsafe access: ${event.source}`,
           type: "alert"
         });
+        setMetrics((m) => ({ ...m, totalInterventions: m.totalInterventions + 1 }));
       }
+    });
+
+    socket.on("rules:updated", (rules: any) => {
+      setBlockAdult(rules.blockAdult);
+      setBlockStreaming(rules.blockStreaming);
+      setBlockGaming(rules.blockGaming);
+      setLockIncognito(rules.lockIncognito);
+      setScanChats(rules.scanChats);
+      if (Array.isArray(rules.customDomains)) {
+        setCustomDomains(rules.customDomains);
+      }
+      setToastAlert({
+        message: "Protection rules updated in real time.",
+        type: "safe"
+      });
     });
 
     socket.on("device:status", (status: { deviceId: string; isOnline: boolean }) => {
@@ -294,10 +417,30 @@ export default function DashboardPage() {
       );
     });
 
+    socket.on("eod:updated", (summary: any) => {
+      setDailySummaryData(summary);
+      if (summary.blocksCount !== undefined) {
+        setMetrics((m) => ({
+          ...m,
+          totalInterventions: summary.blocksCount + (summary.alertsCount || 0)
+        }));
+      }
+    });
+
     return () => {
       socket.disconnect();
     };
-  }, [parentId]);
+  }, [parentId, selectedDeviceId]);
+
+  const syncRulesToBackend = async (partialRule: Record<string, any>) => {
+    if (!selectedDevice) return;
+    try {
+      await fetchWithAuth(`/api/devices/${selectedDevice.id}/rules`, {
+        method: "PATCH",
+        body: JSON.stringify(partialRule)
+      });
+    } catch { }
+  };
 
   const loadDemoProfiles = () => {
     setDevices(INITIAL_DEMO_DEVICES);
@@ -364,7 +507,9 @@ export default function DashboardPage() {
 
   const handleBlockSpecificDomain = (domain: string) => {
     if (!customDomains.includes(domain)) {
-      setCustomDomains([...customDomains, domain]);
+      const updated = [...customDomains, domain];
+      setCustomDomains(updated);
+      syncRulesToBackend({ customDomains: updated });
       setToastAlert({
         message: `Added ${domain} to custom blocked websites.`,
         type: "safe"
@@ -376,7 +521,9 @@ export default function DashboardPage() {
     if (!newDomainInput.trim()) return;
     const clean = newDomainInput.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
     if (!customDomains.includes(clean)) {
-      setCustomDomains([...customDomains, clean]);
+      const updated = [...customDomains, clean];
+      setCustomDomains(updated);
+      syncRulesToBackend({ customDomains: updated });
       setToastAlert({
         message: `Blocked ${clean} across all browsers.`,
         type: "safe"
@@ -386,23 +533,41 @@ export default function DashboardPage() {
   };
 
   const handleRemoveCustomDomain = (dom: string) => {
-    setCustomDomains(customDomains.filter((d) => d !== dom));
+    const updated = customDomains.filter((d) => d !== dom);
+    setCustomDomains(updated);
+    syncRulesToBackend({ customDomains: updated });
   };
 
-  const handleSavePin = (e: React.FormEvent) => {
+  const handleSavePin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newPinInput.length < 4 || newPinInput.length > 6) {
-      setPinUpdateMessage("PIN must be 4 to 6 numbers.");
+    if (newPinInput.length !== 6) {
+      setPinUpdateMessage("PIN must be exactly 6 digits.");
       return;
     }
-    setParentPin(newPinInput);
-    if (parent) {
-      const updated = { ...parent, pinCode: newPinInput };
-      localStorage.setItem("bastiodon_parent_user", JSON.stringify(updated));
-      setParent(updated);
+
+    try {
+      const res = await fetchWithAuth("/api/auth/pin", {
+        method: "PATCH",
+        body: JSON.stringify({ newPin: newPinInput })
+      });
+
+      if (res.ok) {
+        setParentPin(newPinInput);
+        if (parent) {
+          const updated = { ...parent, pinCode: newPinInput };
+          localStorage.setItem("bastiodon_parent_user", JSON.stringify(updated));
+          setParent(updated);
+        }
+        setNewPinInput("");
+        setPinUpdateMessage("Parent PIN updated successfully.");
+      } else {
+        setPinUpdateMessage("Failed to update PIN on server.");
+      }
+    } catch {
+      setParentPin(newPinInput);
+      setNewPinInput("");
+      setPinUpdateMessage("Parent PIN updated (local).");
     }
-    setNewPinInput("");
-    setPinUpdateMessage("Parent PIN updated successfully.");
     setTimeout(() => setPinUpdateMessage(""), 4000);
   };
 
@@ -411,6 +576,24 @@ export default function DashboardPage() {
     navigator.clipboard.writeText(selectedDevice.pairingCode);
     setCopiedCode(true);
     setTimeout(() => setCopiedCode(false), 2500);
+  };
+
+  const handleFinalizeEod = async () => {
+    if (!selectedDevice) return;
+    try {
+      const res = await fetchWithAuth(`/api/devices/${selectedDevice.id}/eod/finalize`, {
+        method: "POST",
+        body: JSON.stringify({ date: new Date().toISOString() })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setDailySummaryData(data.summary);
+        setToastAlert({
+          message: "End-of-day summary finalized for today.",
+          type: "safe"
+        });
+      }
+    } catch { }
   };
 
   const handleDownloadReport = () => {
@@ -434,7 +617,7 @@ TOP WEBSITES VISITED:
 
 RECORDED INCIDENTS & BLOCKED ATTEMPTS:
 - 10:42 PM | Roblox Web Chat | Flagged: "where do you live send number"
-- 10:35 PM | youtube.com | Blocked under Streaming rule
+- 10:35 PM | netflix.com | Blocked under Streaming rule
 - 09:54 PM | adult-site-blocked.com | Blocked automatically by Adult Filter
 - 09:30 PM | poki.com | Blocked gaming website
 
@@ -449,9 +632,41 @@ Exported securely by Bastiodon Platform.`;
     URL.revokeObjectURL(url);
   };
 
-  const handleCreateNewDevice = (e: React.FormEvent) => {
+  const handleCreateNewDevice = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!childNameInput.trim()) return;
+
+    try {
+      const res = await fetchWithAuth("/api/devices/pairing-code", {
+        method: "POST",
+        body: JSON.stringify({
+          name: childNameInput.trim(),
+          browser: "Chrome Extension"
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const createdDev: ChildDevice = {
+          id: data.device.id,
+          childName: data.device.name,
+          name: data.device.name,
+          pairingCode: data.pairingCode,
+          isOnline: false,
+          incognitoBlocked: true,
+          incognitoLocked: true,
+          lastSeenAt: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+          rules: data.device.rules
+        };
+        setDevices((prev) => [createdDev, ...prev]);
+        setSelectedDeviceId(createdDev.id);
+        setNewPairingCode(data.pairingCode);
+        setLogsMap((prev) => ({ ...prev, [createdDev.id]: [] }));
+        setChildNameInput("");
+        return;
+      }
+    } catch { }
 
     const generatedCode = "BST-" + Math.floor(100 + Math.random() * 900);
     const newDev: ChildDevice = {
@@ -704,7 +919,7 @@ Exported securely by Bastiodon Platform.`;
                   <div className="flex items-start justify-between">
                     <div>
                       <div className="text-2xl font-bold tracking-tight text-white flex items-baseline gap-2">
-                        <span>7.8%</span>
+                        <span>{metrics.conversionRate}</span>
                       </div>
                       <p className="text-[11px] text-[#71717a] mt-0.5">
                         Child protection funnel &bull; 5.6K clean sessions from 72K inspects &bull; Last 30 days
@@ -816,7 +1031,7 @@ Exported securely by Bastiodon Platform.`;
                   <div className="absolute bottom-2.5 right-2.5 w-1.5 h-1.5 border-b border-r border-white/30"></div>
 
                   <div>
-                    <div className="text-2xl font-bold tracking-tight text-white">1,842</div>
+                    <div className="text-2xl font-bold tracking-tight text-white">{metrics.totalInterventions.toLocaleString()}</div>
                     <p className="text-[11px] text-[#71717a] mt-0.5">Total blocked threats & safety interventions</p>
                   </div>
 
@@ -895,7 +1110,7 @@ Exported securely by Bastiodon Platform.`;
 
                   <div className="mt-4 pt-3 border-t border-[#18181b] flex items-center justify-between text-[11px] text-[#71717a]">
                     <span>Total domain reach</span>
-                    <span className="text-white font-mono font-medium">10.2K</span>
+                    <span className="text-white font-mono font-medium">{metrics.domainReach.toLocaleString()}</span>
                   </div>
                 </div>
 
@@ -948,7 +1163,7 @@ Exported securely by Bastiodon Platform.`;
 
                   <div className="my-2 flex items-baseline justify-between">
                     <div>
-                      <div className="text-xl font-bold text-white">4.8h / day</div>
+                      <div className="text-xl font-bold text-white">{metrics.dailyHours}h / day</div>
                       <span className="text-[10px] text-[#71717a]">Peak: Sat 9p&ndash;10p</span>
                     </div>
                     <div className="text-right">
@@ -1019,7 +1234,10 @@ Exported securely by Bastiodon Platform.`;
                   </button>
 
                   <button
-                    onClick={() => setToastAlert({ message: "Feed refreshed.", type: "safe" })}
+                    onClick={() => {
+                      if (selectedDevice) fetchEvents(selectedDevice.id);
+                      setToastAlert({ message: "Feed refreshed.", type: "safe" });
+                    }}
                     className="p-1.5 border border-[#27272a] rounded-lg text-[#a1a1aa] hover:text-white hover:bg-white/[0.05] transition-colors"
                     title="Refresh"
                   >
@@ -1073,7 +1291,7 @@ Exported securely by Bastiodon Platform.`;
                           >
                             {isBlocked ? "BLOCKED" : isAlert ? "ALERT" : "ALLOWED"}
                           </span>
-                          <span className="text-xs font-semibold text-white">{log.domain}</span>
+                          <span className="text-xs font-semibold text-white">{log.domain || log.source}</span>
                           <span className="text-[11px] text-[#71717a] font-mono">
                             {new Date(log.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                           </span>
@@ -1082,9 +1300,9 @@ Exported securely by Bastiodon Platform.`;
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
-                        {log.actionTaken !== "BLOCKED" && log.domain && (
+                        {log.actionTaken !== "BLOCKED" && (log.domain || log.source) && (
                           <button
-                            onClick={() => handleBlockSpecificDomain(log.domain)}
+                            onClick={() => handleBlockSpecificDomain((log.domain || log.source) as string)}
                             className="px-2.5 py-1 text-[11px] font-medium border border-[#27272a] rounded-md text-[#a1a1aa] hover:text-white hover:border-white/30 transition-colors"
                           >
                             Block Domain
@@ -1131,6 +1349,7 @@ Exported securely by Bastiodon Platform.`;
                     checked={blockAdult}
                     onChange={(e) => {
                       setBlockAdult(e.target.checked);
+                      syncRulesToBackend({ blockAdult: e.target.checked });
                       setToastAlert({
                         message: e.target.checked ? "Adult filter ON" : "Adult filter OFF",
                         type: "safe"
@@ -1158,6 +1377,7 @@ Exported securely by Bastiodon Platform.`;
                       checked={blockStreaming}
                       onChange={(e) => {
                         setBlockStreaming(e.target.checked);
+                        syncRulesToBackend({ blockStreaming: e.target.checked });
                         setToastAlert({
                           message: e.target.checked ? "Streaming lock ON" : "Streaming lock OFF",
                           type: "safe"
@@ -1167,9 +1387,8 @@ Exported securely by Bastiodon Platform.`;
                     />
                   </div>
 
-                  <div className="pt-2 border-t border-[#1b1b20] grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
+                  <div className="pt-2 border-t border-[#1b1b20] grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                     {[
-                      { key: "youtube", label: "YouTube" },
                       { key: "netflix", label: "Netflix" },
                       { key: "prime", label: "Prime Video" },
                       { key: "hotstar", label: "Disney+ Hotstar" },
@@ -1210,6 +1429,7 @@ Exported securely by Bastiodon Platform.`;
                     checked={blockGaming}
                     onChange={(e) => {
                       setBlockGaming(e.target.checked);
+                      syncRulesToBackend({ blockGaming: e.target.checked });
                       setToastAlert({
                         message: e.target.checked ? "Gaming filter ON" : "Gaming filter OFF",
                         type: "safe"
@@ -1236,6 +1456,7 @@ Exported securely by Bastiodon Platform.`;
                     checked={lockIncognito}
                     onChange={(e) => {
                       setLockIncognito(e.target.checked);
+                      syncRulesToBackend({ lockIncognito: e.target.checked });
                       setToastAlert({
                         message: e.target.checked ? "Incognito lock ON" : "Incognito lock OFF",
                         type: "safe"
@@ -1262,6 +1483,7 @@ Exported securely by Bastiodon Platform.`;
                     checked={scanChats}
                     onChange={(e) => {
                       setScanChats(e.target.checked);
+                      syncRulesToBackend({ scanChats: e.target.checked });
                       setToastAlert({
                         message: e.target.checked ? "Chat scanner ON" : "Chat scanner OFF",
                         type: "safe"
@@ -1333,6 +1555,13 @@ Exported securely by Bastiodon Platform.`;
                 </div>
 
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleFinalizeEod}
+                    className="px-3.5 py-1.5 border border-white/20 text-white text-xs font-semibold rounded-lg hover:bg-white/[0.08] transition-colors"
+                  >
+                    Finalize Today
+                  </button>
+
                   <button
                     onClick={handleDownloadReport}
                     className="px-3.5 py-1.5 bg-white text-black text-xs font-semibold rounded-lg flex items-center gap-1.5 hover:bg-neutral-200 transition-colors shadow-sm"
@@ -1465,7 +1694,7 @@ Exported securely by Bastiodon Platform.`;
                     maxLength={6}
                     value={newPinInput}
                     onChange={(e) => setNewPinInput(e.target.value)}
-                    placeholder="New 4-6 digit PIN"
+                    placeholder="New 6-digit PIN"
                     className="flex-1 px-3 py-2 text-xs bg-[#09090b] border border-[#27272a] rounded-lg text-white font-mono tracking-widest outline-none focus:border-white/40"
                   />
                   <button
