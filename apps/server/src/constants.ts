@@ -17,7 +17,6 @@ export const ADULT_DOMAINS = [
 ];
 
 export const STREAMING_DOMAINS = [
-  "youtube.com",
   "netflix.com",
   "primevideo.com",
   "hotstar.com",
@@ -41,8 +40,7 @@ export const GAMING_DOMAINS = [
   "krunker.io",
   "agar.io",
   "slither.io",
-  "minecraft.net",
-  "chess.com"
+  "minecraft.net"
 ];
 
 export const DANGEROUS_KEYWORDS = [
