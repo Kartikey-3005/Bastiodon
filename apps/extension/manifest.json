@@ -5,14 +5,16 @@
   "description": "Child Cyber Safety & Real-Time Parental Protection Extension for Chrome, Edge, and Brave.",
   "permissions": [
     "declarativeNetRequest",
-    "declarativeNetRequestFeedback",
+    "declarativeNetRequestWithHostAccess",
     "tabs",
     "webNavigation",
     "storage",
-    "alarms"
+    "alarms",
+    "scripting"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "<all_urls>",
+    "http://localhost:4000/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -36,4 +38,3 @@
     }
   ]
 }
-
