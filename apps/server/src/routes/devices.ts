@@ -120,6 +120,10 @@ deviceRouter.delete("/:id", requireParentAuth, async (req: AuthenticatedParentRe
     return res.status(400).json({ error: "6-digit Parent PIN required to delete device" });
   }
 
+  if (!req.parent?.pinHash) {
+    return res.status(400).json({ error: "No Parent PIN configured" });
+  }
+
   const isPinValid = await bcrypt.compare(parsed.data.pin, req.parent.pinHash);
   if (!isPinValid) {
     return res.status(403).json({ error: "Invalid Parent PIN" });
