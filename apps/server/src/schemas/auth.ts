@@ -35,3 +35,7 @@ export const PairDeviceSchema = z.object({
 export const DeleteDeviceSchema = z.object({
   pin: z.string().regex(/^\d{6}$/)
 });
+
+export const GoogleAuthSchema = z.object({
+  credential: z.string().min(10)
+});
