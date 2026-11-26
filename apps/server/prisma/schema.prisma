@@ -31,8 +31,11 @@ enum ScanSeverity {
 model User {
   id           String        @id @default(uuid())
   email        String        @unique
-  passwordHash String
-  pinHash      String
+  passwordHash String?
+  pinHash      String?
+  googleId     String?       @unique
+  name         String?
+  avatarUrl    String?
   plan         PlanTier      @default(PRO)
   devices      ChildDevice[]
   createdAt    DateTime      @default(now())
