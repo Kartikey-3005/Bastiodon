@@ -7,7 +7,7 @@ export interface AuthenticatedParentRequest extends Request {
     id: string;
     email: string;
     plan: string;
-    pinHash: string;
+    pinHash?: string | null;
   };
 }
 
