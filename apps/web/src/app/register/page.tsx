@@ -1,10 +1,19 @@
 "use client";
 
-import React, { useState, Suspense } from "react";
+import React, { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
+import Script from "next/script";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Eye, EyeOff } from "lucide-react";
 import { API_BASE_URL } from "@/types";
+
+declare global {
+  interface Window {
+    google?: any;
+  }
+}
+
+const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "400844110983-q97hi24vf5s72pgvjtclpv1dg6ra6vi3.apps.googleusercontent.com";
 
 function RegisterForm() {
   const router = useRouter();
@@ -20,20 +29,93 @@ function RegisterForm() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleGoogleCredentialResponse = async (response: any) => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/google`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential: response.credential })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.token) {
+        localStorage.setItem("bastiodon_parent_token", data.token);
+        localStorage.setItem("bastiodon_parent_user", JSON.stringify(data.user));
+        router.push("/dashboard");
+      } else {
+        setError(data.error || "Google sign-up failed");
+      }
+    } catch {
+      setError("Failed to connect to authentication server");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const initGoogleAuth = () => {
+    if (typeof window !== "undefined" && window.google?.accounts?.id) {
+      window.google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: handleGoogleCredentialResponse,
+        auto_select: false,
+      });
+
+      const buttonContainer = document.getElementById("google-signup-btn");
+      if (buttonContainer) {
+        buttonContainer.innerHTML = "";
+        window.google.accounts.id.renderButton(buttonContainer, {
+          theme: "filled_black",
+          size: "large",
+          shape: "pill",
+          text: "signup_with",
+          width: 320
+        });
+      }
+    }
+  };
+
+  useEffect(() => {
+    initGoogleAuth();
+  }, []);
+
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    localStorage.setItem("bastiodon_parent_token", "demo-parent-token-building-phase");
-    localStorage.setItem(
-      "bastiodon_parent_user",
-      JSON.stringify({
-        id: "demo-parent-account",
-        name: name || "Demonstration Parent",
-        email: email || "parent@bastiodon.local",
-        subscriptionTier: tier || "PRO",
-        pinCode: pinCode || "1234",
-      })
-    );
-    router.push("/dashboard");
+    if (!email.trim() || !password.trim()) {
+      setError("Email and password are required");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/signup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: email.trim(),
+          password: password.trim(),
+          pin: pinCode.trim() || "123456",
+          plan: tier || "PRO"
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.token) {
+        localStorage.setItem("bastiodon_parent_token", data.token);
+        localStorage.setItem("bastiodon_parent_user", JSON.stringify(data.user));
+        router.push("/dashboard");
+      } else {
+        setError(data.error || "Registration failed");
+      }
+    } catch {
+      setError("Unable to connect to authentication server. Please check that the server is running.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -189,12 +271,24 @@ function RegisterForm() {
                 </button>
               </div>
             </form>
+
+            <div className="mt-8 pt-6 border-t border-zinc-800">
+              <div className="relative flex justify-center text-[10px] uppercase tracking-wider text-zinc-500 mb-4">
+                <span className="bg-zinc-950 px-2">Or continue with</span>
+              </div>
+              <div id="google-signup-btn" className="flex justify-center min-h-[44px]" />
+            </div>
           </div>
 
           <div />
         </div>
 
       </div>
+      <Script
+        src="https://accounts.google.com/gsi/client"
+        strategy="afterInteractive"
+        onLoad={initGoogleAuth}
+      />
     </div>
   );
 }
