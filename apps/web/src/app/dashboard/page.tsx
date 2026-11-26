@@ -170,9 +170,9 @@ const INITIAL_DEMO_LOGS: Record<string, ScanLog[]> = {
 export default function DashboardPage() {
   const router = useRouter();
   const [parent, setParent] = useState<any>(null);
-  const [devices, setDevices] = useState<ChildDevice[]>(INITIAL_DEMO_DEVICES);
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string>("demo-aarav");
-  const [logsMap, setLogsMap] = useState<Record<string, ScanLog[]>>(INITIAL_DEMO_LOGS);
+  const [devices, setDevices] = useState<ChildDevice[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
+  const [logsMap, setLogsMap] = useState<Record<string, ScanLog[]>>({});
   const [activeTab, setActiveTab] = useState<"overview" | "feed" | "controls" | "report" | "pin">("overview");
   const [feedFilter, setFeedFilter] = useState<"ALL" | "BLOCKED" | "ALERT" | "SAFE">("ALL");
 
@@ -187,13 +187,13 @@ export default function DashboardPage() {
   const [blockGaming, setBlockGaming] = useState(true);
   const [lockIncognito, setLockIncognito] = useState(true);
   const [scanChats, setScanChats] = useState(true);
-  const [customDomains, setCustomDomains] = useState<string[]>(["gambling.com", "bet365.com"]);
+  const [customDomains, setCustomDomains] = useState<string[]>([]);
   const [newDomainInput, setNewDomainInput] = useState("");
 
   const [dateRange, setDateRange] = useState<"today" | "yesterday" | "week">("today");
   const [dailySummaryData, setDailySummaryData] = useState<any>(null);
 
-  const [parentPin, setParentPin] = useState("123456");
+  const [parentPin, setParentPin] = useState("");
   const [newPinInput, setNewPinInput] = useState("");
   const [pinUpdateMessage, setPinUpdateMessage] = useState("");
 
@@ -205,10 +205,10 @@ export default function DashboardPage() {
   const [copiedCode, setCopiedCode] = useState(false);
 
   const [metrics, setMetrics] = useState({
-    totalInterventions: 1842,
-    conversionRate: "7.8%",
-    domainReach: 10200,
-    dailyHours: 4.8
+    totalInterventions: 0,
+    conversionRate: "0%",
+    domainReach: 0,
+    dailyHours: 0
   });
 
   const socketRef = useRef<Socket | null>(null);
@@ -294,6 +294,12 @@ export default function DashboardPage() {
   };
 
   useEffect(() => {
+    const token = getAuthToken();
+    if (!token) {
+      router.push("/login");
+      return;
+    }
+
     const userStr = localStorage.getItem("bastiodon_parent_user");
     if (userStr) {
       try {
@@ -301,18 +307,18 @@ export default function DashboardPage() {
         setParent(u);
         if (u.pinCode) setParentPin(u.pinCode);
       } catch { }
-    } else {
-      setParent({
-        id: "demo-parent-account",
-        name: "Demonstration Parent",
-        email: "parent.demo@bastiodon.com",
-        subscriptionTier: "PRO",
-        pinCode: "654321"
-      });
     }
 
     fetchWithAuth("/api/auth/me")
-      .then((res) => (res.ok ? res.json() : null))
+      .then((res) => {
+        if (res.status === 401) {
+          localStorage.removeItem("bastiodon_parent_token");
+          localStorage.removeItem("bastiodon_parent_user");
+          router.push("/login");
+          return null;
+        }
+        return res.ok ? res.json() : null;
+      })
       .then((me) => {
         if (me) {
           setParent((prev: any) => ({ ...prev, ...me }));
@@ -866,15 +872,6 @@ Exported securely by Bastiodon Platform.`;
             </div>
 
             <button
-              onClick={loadDemoProfiles}
-              className="px-2.5 py-1 rounded-lg text-[11px] font-medium text-white/70 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 transition-colors flex items-center gap-1.5"
-              title="Load demo safety logs"
-            >
-              <Sparkles className="w-3 h-3 text-amber-300" />
-              <span className="hidden sm:inline">Demo Data</span>
-            </button>
-
-            <button
               onClick={() => {
                 setNewPairingCode(null);
                 setIsAddDeviceOpen(true);
@@ -1225,14 +1222,6 @@ Exported securely by Bastiodon Platform.`;
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleSimulateEvent}
-                    className="px-3 py-1.5 bg-white text-black text-xs font-semibold rounded-lg flex items-center gap-1.5 hover:bg-neutral-200 transition-colors shadow-sm"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Simulate Event</span>
-                  </button>
-
                   <button
                     onClick={() => {
                       if (selectedDevice) fetchEvents(selectedDevice.id);
