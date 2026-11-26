@@ -11,6 +11,8 @@
     "dev:web": "npm run dev --workspace=apps/web",
     "build:server": "npm run build --workspace=apps/server",
     "build:web": "npm run build --workspace=apps/web"
+  },
+  "dependencies": {
+    "google-auth-library": "11.3.4"
   }
 }
-
