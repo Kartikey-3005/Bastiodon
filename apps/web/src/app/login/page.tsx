@@ -1,34 +1,111 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import Script from "next/script";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Check } from "lucide-react";
 import { API_BASE_URL } from "@/types";
 
+declare global {
+  interface Window {
+    google?: any;
+  }
+}
+
+const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || "400844110983-q97hi24vf5s72pgvjtclpv1dg6ra6vi3.apps.googleusercontent.com";
+
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("mark.johnson@gmail.com");
-  const [password, setPassword] = useState("password123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleGoogleCredentialResponse = async (response: any) => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/google`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential: response.credential })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.token) {
+        localStorage.setItem("bastiodon_parent_token", data.token);
+        localStorage.setItem("bastiodon_parent_user", JSON.stringify(data.user));
+        router.push("/dashboard");
+      } else {
+        setError(data.error || "Google authentication failed");
+      }
+    } catch {
+      setError("Failed to connect to authentication server");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const initGoogleAuth = () => {
+    if (typeof window !== "undefined" && window.google?.accounts?.id) {
+      window.google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: handleGoogleCredentialResponse,
+        auto_select: false,
+      });
+
+      const buttonContainer = document.getElementById("google-signin-btn");
+      if (buttonContainer) {
+        buttonContainer.innerHTML = "";
+        window.google.accounts.id.renderButton(buttonContainer, {
+          theme: "filled_black",
+          size: "large",
+          shape: "pill",
+          text: "continue_with",
+          width: 320
+        });
+      }
+    }
+  };
+
+  useEffect(() => {
+    initGoogleAuth();
+  }, []);
+
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    localStorage.setItem("bastiodon_parent_token", "demo-parent-token-building-phase");
-    localStorage.setItem(
-      "bastiodon_parent_user",
-      JSON.stringify({
-        id: "demo-parent-account",
-        name: "Demonstration Parent",
-        email: email || "parent@bastiodon.local",
-        subscriptionTier: "PRO",
-        pinCode: "1234",
-      })
-    );
-    router.push("/dashboard");
+    if (!email.trim() || !password.trim()) {
+      setError("Please enter your email and password");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password: password.trim() })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.token) {
+        localStorage.setItem("bastiodon_parent_token", data.token);
+        localStorage.setItem("bastiodon_parent_user", JSON.stringify(data.user));
+        router.push("/dashboard");
+      } else {
+        setError(data.error || "Invalid email or password");
+      }
+    } catch {
+      setError("Unable to connect to authentication server. Please check that the server is running.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -163,6 +240,13 @@ export default function LoginPage() {
                   </button>
                 </div>
               </form>
+
+              <div className="mt-8 pt-6 border-t border-zinc-800">
+                <div className="relative flex justify-center text-[10px] uppercase tracking-wider text-zinc-500 mb-4">
+                  <span className="bg-zinc-950 px-2">Or continue with</span>
+                </div>
+                <div id="google-signin-btn" className="flex justify-center min-h-[44px]" />
+              </div>
             </div>
 
             <div />
@@ -170,6 +254,11 @@ export default function LoginPage() {
 
         </div>
       </div>
+      <Script
+        src="https://accounts.google.com/gsi/client"
+        strategy="afterInteractive"
+        onLoad={initGoogleAuth}
+      />
     </main>
   );
 }
